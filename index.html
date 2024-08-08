@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Viewer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        img {
+            max-width: 80%;
+            height: auto;
+            margin-bottom: 20px;
+        }
+
+        #image-label {
+            font-size: 20px;
+            margin-bottom: 20px;
+        }
+
+        #image-id {
+            font-size: 16px;
+            margin-bottom: 20px;
+        }
+
+        .input-container {
+            margin-bottom: 20px;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            margin: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Image Viewer</h1>
+    <img id="image-display" src="" alt="Image">
+    <div id="image-label">Label: </div>
+    <div id="image-id">ID: </div>
+    <div class="input-container">
+        <select id="new-label">
+            <option value="road_flooded">road_flooded</option>
+            <option value="road_clear">road_clear</option>
+            <option value="road_obstructed">road_obstructed</option>
+            <option value="road_wet">road_wet</option>
+        </select>
+        <button onclick="updateLabel()">Update Label</button>
+    </div>
+    <button onclick="loadNextImage()">Load Next Image</button>
+
+    <script>
+        let currentIndex = 0;
+        let imageList = [];
+
+        async function fetchCSV() {
+            const response = await fetch('image_labels.csv');
+            const csvText = await response.text();
+            const rows = csvText.trim().split('\n').slice(1); // Skip header row
+            rows.forEach(row => {
+                const [image_id, label] = row.split(',');
+                imageList.push({ image_id: image_id.trim(), label: label.trim() });
+            });
+        }
+
+        async function fetchImageData(imageId) {
+            const response = await fetch(`https://api.floodwatch-ai.com/photos/${imageId}?authorId=12`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch image data');
+            }
+            return await response.json();
+        }
+
+        async function loadImage() {
+            if (currentIndex >= imageList.length) {
+                alert('No more images.');
+                return;
+            }
+            const { image_id } = imageList[currentIndex];
+            try {
+                const imageData = await fetchImageData(image_id);
+                const imageUrl = imageData.dataUrl;
+                const roadCondition = imageData.latestLabels.road_condition[0] || 'Unknown';
+
+                document.getElementById('image-display').src = imageUrl;
+                document.getElementById('image-label').innerText = `Label: ${roadCondition}`;
+                document.getElementById('image-id').innerText = `ID: ${image_id}`;
+                document.getElementById('new-label').value = roadCondition;
+            } catch (error) {
+                console.error('Error loading image:', error);
+                alert('Error loading image. Please try again.');
+            }
+        }
+
+        async function updateLabel() {
+            const newLabel = document.getElementById('new-label').value;
+            const { image_id } = imageList[currentIndex];
+            const author_id = 12; // Assuming a fixed author ID
+
+            const data = {
+                labels: [
+                    { labelNames: [newLabel], taskName: 'road_condition' }
+                ],
+                authorId: author_id
+            };
+
+            try {
+                const response = await fetch(`https://api.floodwatch-ai.com/photos/${image_id}`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to update label');
+                }
+
+                // Update the label in the local list and UI
+                imageList[currentIndex].label = newLabel;
+                document.getElementById('image-label').innerText = `Label: ${newLabel}`;
+                alert('Label updated successfully!');
+            } catch (error) {
+                console.error('Error updating label:', error);
+                alert('Error updating label. Please try again.');
+            }
+        }
+
+        async function loadNextImage() {
+            currentIndex++;
+            if (currentIndex >= imageList.length) {
+                alert('No more images.');
+                return;
+            }
+            await loadImage();
+            // Remove the previously shown image from the list and update CSV
+            const previousImageId = imageList[currentIndex - 1].image_id;
+            await removeImageFromCSV(previousImageId);
+        }
+
+        async function removeImageFromCSV(imageId) {
+            await fetch('http://localhost:8000/update_csv', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_id: imageId })
+            });
+        }
+
+        // Load CSV and the initial image
+        (async () => {
+            await fetchCSV();
+            await loadImage();
+        })();
+    </script>
+</body>
+
+</html>
